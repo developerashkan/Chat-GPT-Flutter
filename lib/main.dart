@@ -6,7 +6,7 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -14,13 +14,15 @@ class MyApp extends StatelessWidget {
       title: 'Chat GPT',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-          brightness: Brightness.light,
-          primarySwatch: Colors.blue,
-          useMaterial3: true),
+        colorSchemeSeed: Colors.teal,
+        useMaterial3: true,
+        brightness: Brightness.light,
+      ),
       darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          primarySwatch: Colors.blue,
-          useMaterial3: true),
+        colorSchemeSeed: Colors.teal,
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
       themeMode: ThemeMode.system,
       home: const SplashScreen(),
     );
