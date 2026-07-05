@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:chat_gpt_sdk/chat_gpt_sdk.dart';
-import 'package:chatgpt/messages_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+
+import 'chat_message.dart';
+import 'messages_widget.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -13,96 +16,121 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
-  final List<MessagesWidget> _messages = [];
-  ChatGPT? chatGPT;
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
+  
+  final List<ChatMessage> _messages = [];
+  
+  late final ChatGPT _chatGPT;
   StreamSubscription? _subscription;
   bool _isTyping = false;
-  String apiKey = "YourApiKey";
+  
+  final String _apiKey = "YourApiKey";
 
   @override
   void initState() {
     super.initState();
-    chatGPT = ChatGPT.instance.builder(
-      apiKey,
-    );
+    _chatGPT = ChatGPT.instance.builder(_apiKey);
   }
 
   @override
   void dispose() {
-    chatGPT!.genImgClose();
+    _chatGPT.genImgClose();
     _subscription?.cancel();
+    _controller.dispose();
+    _scrollController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
-  void _sendMessage() {
-    if (_controller.text.isEmpty) return;
+  Future<void> _sendMessage() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
 
-    final message = MessagesWidget(
-      text: _controller.text,
-      sender: "me",
-    );
+    _controller.clear();
+    _focusNode.unfocus();
 
     setState(() {
-      _messages.insert(0, message);
+      _messages.insert(0, ChatMessage(text: text, role: MessageRole.user));
       _isTyping = true;
     });
 
-    _controller.clear();
-
-    _translateAndInsert(message.text);
+    _scrollToBottom();
+    await _translateAndInsert(text);
   }
 
-  void _translateAndInsert(String text) async {
-    final request =
-        CompleteReq(prompt: text, model: kTranslateModelV3, max_tokens: 200);
+  Future<void> _translateAndInsert(String text) async {
+    try {
+      final request = CompleteReq(
+        prompt: text, 
+        model: kTranslateModelV3, 
+        max_tokens: 200,
+      );
 
-    final response = await chatGPT!.onCompleteStream(request: request).first;
-    insertNewData(response!.choices[0].text);
+      final response = await _chatGPT.onCompleteStream(request: request).first;
+      
+      if (response != null && response.choices.isNotEmpty) {
+        _insertBotMessage(response.choices.first.text, MessageRole.bot);
+      }
+    } catch (e) {
+      developer.log("API Error", error: e);
+      _insertBotMessage("Sorry, I encountered an error. Please try again.", MessageRole.error);
+    }
   }
 
-  void insertNewData(String response) {
-    final botMessage = MessagesWidget(
-      text: response,
-      sender: "chat gpt",
-    );
-
+  void _insertBotMessage(String text, MessageRole role) {
+    if (!mounted) return;
+    
     setState(() {
-      _messages.insert(0, botMessage);
+      _messages.insert(0, ChatMessage(text: text, role: role));
       _isTyping = false;
     });
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   Widget _buildTextInput() {
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(2.0),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        child: Row(
+          children: [
+            Expanded(
               child: TextField(
                 controller: _controller,
-                onSubmitted: (value) => _sendMessage(),
-                decoration:
-                    const InputDecoration.collapsed(hintText: "type ..."),
-              ),
-            ),
-          ),
-          ButtonBar(
-            children: [
-              Card(
-                elevation: 8,
-                shape: const StadiumBorder(),
-                child: IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () {
-                    _sendMessage();
-                  },
+                focusNode: _focusNode,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _sendMessage(),
+                decoration: InputDecoration(
+                  hintText: "Message ChatGPT...",
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24.0),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+            const SizedBox(width: 8),
+            FloatingActionButton(
+              elevation: 0,
+              onPressed: _isTyping ? null : _sendMessage,
+              child: const Icon(Icons.send_rounded),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -110,31 +138,34 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("ChatGPT")),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Flexible(
-              child: ListView.builder(
-                reverse: true,
-                padding: const EdgeInsets.all(8),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  return _messages[index];
-                },
+      appBar: AppBar(
+        title: const Text("ChatGPT"),
+        centerTitle: true,
+        elevation: 1,
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              reverse: true,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                return MessageBubble(message: _messages[index]);
+              },
+            ),
+          ),
+          if (_isTyping)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Lottie.asset("assets/dots.json", width: 60, height: 40),
               ),
             ),
-            if (_isTyping)
-              Lottie.asset("assets/dots.json", width: 90, height: 90),
-            const Divider(height: 2),
-            Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-              ),
-              child: _buildTextInput(),
-            )
-          ],
-        ),
+          _buildTextInput(),
+        ],
       ),
     );
   }
